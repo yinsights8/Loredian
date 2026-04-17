@@ -1,0 +1,509 @@
+import { v4 as uuidv4 } from 'uuid'
+import { logger, logVerboseRetrieval } from '../../logger'
+import { embedText } from './embeddingService'
+import {
+  insertDocument,
+  searchSimilar,
+  getAllDocuments,
+  getDocumentsByFilter,
+} from './lanceService'
+// [MemorySettings] Import settings to check if memory storage is enabled
+import { getSettings } from '../settingsService'
+import type {
+  LoreDocument,
+  StoreThoughtInput,
+  RetrievalOptions,
+  ScoredDocument,
+  RetrievedDocumentSet,
+} from '../../../shared/types'
+
+const DEFAULT_MAX_RESULTS = 1000
+const MAX_CONTEXT_DOCS = 100
+const DUPLICATE_THRESHOLD = 0.92
+const MAX_SCORE_DEGRADATION_RATIO = 0.15 // If score decays more than 15% from the top score, drop it
+const MINIMUM_RELEVANCE_SCORE = 0.3
+const MIN_VECTOR_CANDIDATES = MAX_CONTEXT_DOCS * 4
+const DEFAULT_VECTOR_CANDIDATES = 300
+
+const TAG_BOOST_FACTOR = 0.2
+
+interface ObsidianMetadata {
+  fileName?: string
+  filePath?: string
+  chunkIndex?: number
+}
+
+function resolveVectorCandidateLimit(options?: RetrievalOptions): number {
+  const requested = options?.maxResults
+  if (typeof requested === 'number' && Number.isFinite(requested) && requested > 0) {
+    return Math.max(Math.floor(requested), MIN_VECTOR_CANDIDATES)
+  }
+
+  return DEFAULT_VECTOR_CANDIDATES
+}
+
+function buildFilter(options?: RetrievalOptions): string | undefined {
+  const parts: string[] = []
+  if (options?.ids && options.ids.length > 0) {
+    const idConditions = options.ids.map((id) => `id = '${escapeFilterValue(id)}'`)
+    parts.push(`(${idConditions.join(' OR ')})`)
+  }
+  if (options?.type) {
+    parts.push(`type = '${escapeFilterValue(options.type)}'`)
+  }
+  if (options?.dateFrom) {
+    parts.push(`date >= '${escapeFilterValue(options.dateFrom)}'`)
+  }
+  if (options?.dateTo) {
+    parts.push(`date <= '${escapeFilterValue(options.dateTo)}'`)
+  }
+  if (options?.createdAtFrom) {
+    parts.push(`createdAt >= '${escapeFilterValue(options.createdAtFrom)}'`)
+  }
+  if (options?.createdAtTo) {
+    parts.push(`createdAt < '${escapeFilterValue(options.createdAtTo)}'`)
+  }
+  if (options?.sources && options.sources.length > 0) {
+    const sourceConditions = options.sources.map((s) => `source = '${escapeFilterValue(s)}'`)
+    parts.push(`(${sourceConditions.join(' OR ')})`)
+  }
+  return parts.length > 0 ? parts.join(' AND ') : undefined
+}
+
+function boostByTags(docs: ScoredDocument[], queryTags: string[]): ScoredDocument[] {
+  if (queryTags.length === 0) return docs
+
+  const lowerTags = queryTags.map((t) => t.toLowerCase())
+
+  return docs.map((doc) => {
+    const docTags = (doc.tags || '').toLowerCase().split(',').filter(Boolean)
+    const matchCount = lowerTags.filter((qt) =>
+      docTags.some((dt) => dt.includes(qt) || qt.includes(dt)),
+    ).length
+    if (matchCount === 0) return doc
+    const boost = TAG_BOOST_FACTOR * (matchCount / lowerTags.length)
+    return { ...doc, score: doc.score + boost }
+  })
+}
+
+function normalizeTitle(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/\.md$/i, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ')
+}
+
+function parseObsidianMetadata(metadata: string): ObsidianMetadata | null {
+  try {
+    const parsed = JSON.parse(metadata) as ObsidianMetadata
+    if (!parsed || typeof parsed !== 'object') return null
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+function scoreTitleMatch(fileName: string, candidates: readonly string[]): number {
+  const normalizedFileName = normalizeTitle(fileName)
+  let bestScore = 0
+
+  for (const candidate of candidates) {
+    const normalizedCandidate = normalizeTitle(candidate)
+    if (!normalizedCandidate) continue
+
+    if (normalizedFileName === normalizedCandidate) {
+      bestScore = Math.max(bestScore, 1.5)
+      continue
+    }
+
+    if (normalizedFileName.includes(normalizedCandidate) || normalizedCandidate.includes(normalizedFileName)) {
+      bestScore = Math.max(bestScore, 1.2)
+    }
+  }
+
+  return bestScore
+}
+
+// [MemorySettings] Store a thought - checks if memory storage is enabled first
+export async function storeThought(input: StoreThoughtInput): Promise<LoreDocument> {
+  // [MemorySettings] Check if memory storage is disabled - skip storing if disabled
+  const settings = getSettings()
+  if (!settings.memorySettings.enabled) {
+    logger.debug({ contentPreview: input.content.slice(0, 80) }, '[store] skipped - memory disabled')
+    // Return dummy document to satisfy callers
+    return {
+      id: 'disabled',
+      content: input.content,
+      vector: new Float32Array(0),
+      type: input.type,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      date: input.date,
+      tags: input.tags.join(','),
+      source: 'lore',
+      metadata: JSON.stringify({ originalInput: input.originalInput }),
+      isDeleted: false,
+    }
+  }
+
+  const vector = await embedText(input.content)
+  const now = new Date().toISOString()
+
+  const document: LoreDocument = {
+    id: uuidv4(),
+    content: input.content,
+    vector,
+    type: input.type,
+    createdAt: now,
+    updatedAt: now,
+    date: input.date,
+    tags: input.tags.join(','),
+    source: 'lore',
+    metadata: JSON.stringify({ originalInput: input.originalInput }),
+    isDeleted: false,
+  }
+
+  await insertDocument(document)
+  logger.debug({ type: document.type, id: document.id.slice(0, 8), tags: input.tags, contentPreview: input.content.slice(0, 80) }, '[store] saved document')
+  return document
+}
+
+// [MemorySettings] Store a thought with additional metadata - checks if memory storage is enabled first
+export async function storeThoughtWithMetadata(
+  input: StoreThoughtInput,
+  metadata: object,
+): Promise<LoreDocument> {
+  // [MemorySettings] Check if memory storage is disabled - skip storing if disabled
+  const settings = getSettings()
+  if (!settings.memorySettings.enabled) {
+    logger.debug({ contentPreview: input.content.slice(0, 80) }, '[store] skipped with metadata - memory disabled')
+    // Return dummy document to satisfy callers
+    return {
+      id: 'disabled',
+      content: input.content,
+      vector: new Float32Array(0),
+      type: input.type,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      date: input.date,
+      tags: input.tags.join(','),
+      source: 'lore',
+      metadata: JSON.stringify({ ...metadata, originalInput: input.originalInput }),
+      isDeleted: false,
+    }
+  }
+
+  const vector = await embedText(input.content)
+  const now = new Date().toISOString()
+
+  const document: LoreDocument = {
+    id: uuidv4(),
+    content: input.content,
+    vector,
+    type: input.type,
+    createdAt: now,
+    updatedAt: now,
+    date: input.date,
+    tags: input.tags.join(','),
+    source: 'lore',
+    metadata: JSON.stringify({ ...metadata, originalInput: input.originalInput }),
+    isDeleted: false,
+  }
+
+  await insertDocument(document)
+  logger.debug({ type: document.type, id: document.id.slice(0, 8), tags: input.tags, contentPreview: input.content.slice(0, 80) }, '[store] saved document')
+  return document
+}
+
+// ── Duplicate detection ───────────────────────────────────────
+
+export async function checkForDuplicate(content: string): Promise<LoreDocument | null> {
+  const embedding = await embedText(content)
+  const results = await searchSimilar(embedding, 1)
+
+  if (results.length === 0) return null
+
+  const top = results[0]
+  const distance = '_distance' in top
+    ? (top as Record<string, unknown>)._distance as number
+    : 1
+  const similarity = 1 - distance
+
+  if (similarity >= DUPLICATE_THRESHOLD) {
+    return rowToLoreDoc(top as unknown as Record<string, unknown>)
+  }
+  return null
+}
+
+function rowToLoreDoc(row: Record<string, unknown>): LoreDocument {
+  return row as unknown as LoreDocument
+}
+
+// ── Standard retrieval ────────────────────────────────────────
+
+export async function retrieveRelevantDocuments(
+  query: string,
+  options?: RetrievalOptions,
+): Promise<LoreDocument[]> {
+  const queryVector = await embedText(query)
+
+  const limit = options?.maxResults ?? DEFAULT_MAX_RESULTS
+  const filter = buildFilter(options)
+  const rawResults = await searchSimilar(queryVector, limit, filter)
+
+  if (typeof options?.similarityThreshold !== 'number') {
+    return rawResults
+  }
+
+  return rawResults.filter((document) => {
+    const distance = '_distance' in document
+      ? (document as Record<string, unknown>)._distance as number
+      : 1
+    return 1 - distance >= options.similarityThreshold!
+  })
+}
+
+// ── Adaptive retrieval ────────────────────────────────────────
+
+export async function retrieveWithAdaptiveThreshold(
+  query: string,
+  options?: RetrievalOptions,
+): Promise<RetrievedDocumentSet> {
+  const queryVector = await embedText(query)
+  const filter = buildFilter(options)
+  const candidateLimit = resolveVectorCandidateLimit(options)
+
+  const rawResults = await searchSimilar(queryVector, candidateLimit, filter)
+
+  const scored: ScoredDocument[] = rawResults.map((doc) => {
+    const distance = '_distance' in doc
+      ? (doc as Record<string, unknown>)._distance as number
+      : 0
+    return { ...doc, score: 1 - distance }
+  })
+
+  const boosted = boostByTags(scored, options?.tags ?? [])
+    .sort((a, b) => b.score - a.score)
+
+  if (boosted.length > 0) {
+    logger.debug(
+      { scores: boosted.slice(0, 10).map((d) => `${d.score.toFixed(3)}${d.tags ? ` [${d.tags}]` : ''}`) },
+      '[retrieval] top scores',
+    )
+  }
+
+  const relevant = options?.skipRelevanceCliff
+    ? boosted.filter((doc) => doc.score >= MINIMUM_RELEVANCE_SCORE).slice(0, MAX_CONTEXT_DOCS)
+    : applyRelevanceCliff(boosted)
+
+  logger.debug(
+    { candidates: boosted.length, afterCliff: relevant.length, minScore: MINIMUM_RELEVANCE_SCORE },
+    '[retrieval] candidates after cliff+floor',
+  )
+
+  logVerboseRetrieval(query, relevant)
+
+  return {
+    documents: relevant,
+    totalCandidates: boosted.length,
+    cutoffScore: relevant.length > 0 ? relevant[relevant.length - 1].score : 0,
+  }
+}
+
+export async function retrieveObsidianByTitleCandidates(
+  titleCandidates: readonly string[],
+  options?: RetrievalOptions,
+): Promise<RetrievedDocumentSet> {
+  if (titleCandidates.length === 0) {
+    return { documents: [], totalCandidates: 0, cutoffScore: 0 }
+  }
+
+  const baseOptions: RetrievalOptions = {
+    ...options,
+    sources: ['obsidian'],
+    type: 'obsidian-note',
+  }
+
+  const filter = buildFilter(baseOptions)
+  const limit = Math.max((options?.maxResults ?? DEFAULT_MAX_RESULTS) * 20, 500)
+  const documents = await getDocumentsByFilter(filter, limit)
+
+  const scoredDocuments: ScoredDocument[] = []
+  for (const document of documents) {
+    const meta = parseObsidianMetadata(document.metadata)
+    const fileName = meta?.fileName
+    if (!fileName) continue
+
+    const titleScore = scoreTitleMatch(fileName, titleCandidates)
+    if (titleScore <= 0) continue
+
+    // Keep note chunks grouped near the top while preserving title-level ordering.
+    const chunkIndexPenalty = typeof meta?.chunkIndex === 'number' ? Math.min(meta.chunkIndex, 20) * 0.005 : 0
+    scoredDocuments.push({
+      ...document,
+      score: titleScore - chunkIndexPenalty,
+    })
+  }
+
+  scoredDocuments.sort((left, right) => {
+    if (right.score !== left.score) return right.score - left.score
+    return right.createdAt.localeCompare(left.createdAt)
+  })
+
+  const capped = scoredDocuments.slice(0, MAX_CONTEXT_DOCS)
+  logVerboseRetrieval(`[ByTitle: ${titleCandidates.join(' | ')}]`, capped)
+
+  return {
+    documents: capped,
+    totalCandidates: scoredDocuments.length,
+    cutoffScore: capped.length > 0 ? capped[capped.length - 1].score : 0,
+  }
+}
+
+export function mergeRetrievedDocumentSets(
+  primary: RetrievedDocumentSet,
+  secondary: RetrievedDocumentSet,
+  maxResults = MAX_CONTEXT_DOCS,
+): RetrievedDocumentSet {
+  const merged = new Map<string, ScoredDocument>()
+
+  for (const doc of primary.documents) {
+    merged.set(doc.id, doc)
+  }
+
+  for (const doc of secondary.documents) {
+    const existing = merged.get(doc.id)
+    if (!existing || doc.score > existing.score) {
+      merged.set(doc.id, doc)
+    }
+  }
+
+  const documents = [...merged.values()]
+    .sort((a, b) => b.score - a.score)
+    .slice(0, maxResults)
+
+  return {
+    documents,
+    totalCandidates: primary.totalCandidates + secondary.totalCandidates,
+    cutoffScore: documents.length > 0 ? documents[documents.length - 1].score : 0,
+  }
+}
+
+export async function retrieveByFilters(
+  options?: RetrievalOptions,
+): Promise<RetrievedDocumentSet> {
+  const filter = buildFilter(options)
+  const limit = options?.maxResults ?? DEFAULT_MAX_RESULTS
+  const documents = await getDocumentsByFilter(filter, limit)
+
+  const scoredDocuments: ScoredDocument[] = boostByTags(
+    documents.map((document) => ({ ...document, score: 1 })),
+    options?.tags ?? [],
+  ).sort((left, right) => {
+    if (right.score !== left.score) {
+      return right.score - left.score
+    }
+
+    return right.createdAt.localeCompare(left.createdAt)
+  })
+
+  logVerboseRetrieval(`[ByFilters: ${JSON.stringify(options)}]`, scoredDocuments)
+
+  return {
+    documents: scoredDocuments,
+    totalCandidates: scoredDocuments.length,
+    cutoffScore: scoredDocuments.length > 0 ? scoredDocuments[scoredDocuments.length - 1].score : 0,
+  }
+}
+
+function applyRelevanceCliff(results: ScoredDocument[]): ScoredDocument[] {
+  if (results.length === 0) return []
+
+  if (results[0].score < MINIMUM_RELEVANCE_SCORE) return []
+
+  const kept: ScoredDocument[] = [results[0]]
+  const topScore = results[0].score
+
+  for (let i = 1; i < results.length; i++) {
+    if (kept.length >= MAX_CONTEXT_DOCS) break
+    if (results[i].score < MINIMUM_RELEVANCE_SCORE) break
+
+    // Calculate how much the score has degraded from the BEST match
+    const degradation = topScore - results[i].score
+    const relativeDegradation = topScore > 0 ? degradation / topScore : degradation
+
+    // If it degraded by more than the allowed ratio compared to the top match, cut off here
+    if (relativeDegradation > MAX_SCORE_DEGRADATION_RATIO) break
+
+    kept.push(results[i])
+  }
+
+  return kept
+}
+
+// ── Multi-query retrieval ─────────────────────────────────────
+
+export async function multiQueryRetrieve(
+  queries: string[],
+  options?: RetrievalOptions,
+): Promise<RetrievedDocumentSet> {
+  const filter = buildFilter(options)
+  const candidateLimit = resolveVectorCandidateLimit(options)
+
+  const queryVectors = await Promise.all(queries.map((q) => embedText(q)))
+
+  const allResults = await Promise.all(
+    queryVectors.map((vec) => searchSimilar(vec, candidateLimit, filter)),
+  )
+
+  const bestById = new Map<string, ScoredDocument>()
+
+  for (const results of allResults) {
+    for (const doc of results) {
+      const distance = '_distance' in doc
+        ? (doc as Record<string, unknown>)._distance as number
+        : 0
+      const score = 1 - distance
+      const existing = bestById.get(doc.id)
+
+      if (!existing || score > existing.score) {
+        bestById.set(doc.id, { ...doc, score })
+      }
+    }
+  }
+
+  const scored = [...bestById.values()].sort((a, b) => b.score - a.score)
+
+  if (scored.length > 0) {
+    logger.debug(
+      { queryCount: queries.length, uniqueDocs: scored.length, scores: scored.slice(0, 10).map((d) => d.score.toFixed(3)) },
+      '[multi-query] unique docs',
+    )
+  }
+
+  const relevant = applyRelevanceCliff(scored)
+
+  logger.debug(
+    { candidates: scored.length, afterCliff: relevant.length, minScore: MINIMUM_RELEVANCE_SCORE },
+    '[multi-query] candidates after cliff+floor',
+  )
+
+  logVerboseRetrieval(queries.join(' | '), relevant)
+
+  return {
+    documents: relevant,
+    totalCandidates: scored.length,
+    cutoffScore: relevant.length > 0 ? relevant[relevant.length - 1].score : 0,
+  }
+}
+
+export async function getDocumentCount(): Promise<number> {
+  const docs = await getAllDocuments(false)
+  return docs.length
+}
+
+function escapeFilterValue(value: string): string {
+  return value.replace(/'/g, "''")
+}
