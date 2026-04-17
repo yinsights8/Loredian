@@ -1,8 +1,8 @@
 import { readFileSync, readdirSync, statSync, watch, existsSync } from 'fs'
 import { join, relative, extname, basename } from 'path'
 import { logger } from '../logger'
-import { embedText } from './embeddingService'
-import { insertDocuments, getDocumentsByFilter, hardDeleteDocument } from './lanceService'
+import { embedText } from './storage/embeddingService'
+import { insertDocuments, getDocumentsByFilter, hardDeleteDocument } from './storage/lanceService'
 import { addTags, buildRegistry as buildTagRegistry } from './tagRegistry'
 import {
   loadCache,

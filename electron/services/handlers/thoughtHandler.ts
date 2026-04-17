@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from 'uuid'
-import { storeThought, storeThoughtWithMetadata, checkForDuplicate } from '../documentPipeline'
+import { storeThought, storeThoughtWithMetadata, checkForDuplicate } from '../storage/documentPipeline'
 import { formatLocalDate } from '../localDate'
 import { decomposeForStorage } from '../saveDecompositionService'
 import type { ClassificationResult, AgentEvent, DecomposedItem, DocumentType, ConversationEntry } from '../../../shared/types'

@@ -58,6 +58,7 @@ export interface RetrievalOptions {
   sources?: DocumentSource[]
   maxResults?: number
   similarityThreshold?: number
+  skipRelevanceCliff?: boolean
 }
 
 export interface DatabaseStats {
@@ -79,6 +80,21 @@ export interface ChatMessage {
   isStreaming?: boolean
 }
 
+// [MemorySettings] User configurable settings for memory storage
+export interface MemorySettings {
+  enabled: boolean       // Whether memory storage is enabled
+  provider: 'lancedb'  // Memory database provider (future: chroma, pinecone, etc.)
+  dbPath: string       // Custom database path (empty = use default)
+}
+
+// [MemorySettings] Runtime statistics about memory storage
+export interface MemoryStats {
+  connected: boolean              // Whether DB is connected
+  totalDocuments: number         // Total stored documents
+  deletedDocuments: number       // Soft-deleted documents
+  lastUpdated: string | null     // Last document update timestamp
+}
+
 export interface AppSettings {
   shortcut: string
   startOnLogin: boolean
@@ -94,6 +110,8 @@ export interface AppSettings {
   obsidianVaults: ObsidianVaultConfig[]
   obsidianAutoSync: boolean
   obsidianSyncIntervalMinutes: number
+  // ── Memory settings ────────────────────────────────────────
+  memorySettings: MemorySettings
 }
 
 export interface DisplayInfo {

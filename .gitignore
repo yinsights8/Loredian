@@ -21,3 +21,10 @@ release/**/*.yaml
 *.log
 .DS_Store
 Thumbs.db
+docs/
+
+
+.CLAUDE.md  
+.cursor/
+.agent/
+.claude/

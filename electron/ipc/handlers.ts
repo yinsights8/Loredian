@@ -20,9 +20,10 @@ import {
   deleteModel,
 } from '../services/ollamaService'
 import { bootstrapOllama, restartOllamaWithNewModelsPath } from '../services/ollamaBootstrap'
-import { getStats, resetTable } from '../services/lanceService'
-import { retrieveRelevantDocuments } from '../services/documentPipeline'
-import { getDocumentsByType } from '../services/lanceService'
+import { getStats, resetTable } from '../services/storage/lanceService'
+import { retrieveRelevantDocuments } from '../services/storage/documentPipeline'
+import { getDocumentsByType } from '../services/storage/lanceService'
+import { getDbPath, getLastUpdated } from '../services/storage/lanceService'
 import { processUserInput, clearConversation } from '../services/agentService'
 import { getSystemInfo, getHardwareProfile } from '../services/systemInfoService'
 import { refreshObsidianAutoSyncScheduler } from '../services/obsidianAutoSyncScheduler'
@@ -312,6 +313,43 @@ export function registerIpcHandlers(): void {
         error: err instanceof Error ? err.message : 'Failed to get stats',
       }
     }
+  })
+
+  // [MemorySettings] IPC handler - get memory storage statistics
+  ipcMain.handle('memory:stats', async () => {
+    try {
+      const stats = await getStats()
+      const lastUpdated = await getLastUpdated()
+      return {
+        connected: true,
+        totalDocuments: stats.totalDocuments,
+        deletedDocuments: stats.deletedDocuments,
+        lastUpdated,
+      }
+    } catch {
+      return {
+        connected: false,
+        totalDocuments: 0,
+        deletedDocuments: 0,
+        lastUpdated: null,
+      }
+    }
+  })
+
+  // [MemorySettings] IPC handler - get current database path
+  ipcMain.handle('memory:get-db-path', () => {
+    return getDbPath()
+  })
+
+  // [MemorySettings] IPC handler - open folder picker for custom DB path
+  ipcMain.handle('memory:pick-folder', async (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    const result = await dialog.showOpenDialog(win!, {
+      properties: ['openDirectory'],
+      title: 'Choose database folder',
+    })
+    if (result.canceled) return null
+    return result.filePaths[0]
   })
 
   ipcMain.handle(

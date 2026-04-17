@@ -1,5 +1,5 @@
 import { logger } from '../logger'
-import { getAllDocuments } from './lanceService'
+import { getAllDocuments } from './storage/lanceService'
 
 /**
  * Global tag registry — maintains a deduplicated pool of all tags

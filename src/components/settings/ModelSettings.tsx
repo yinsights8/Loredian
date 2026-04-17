@@ -16,6 +16,7 @@ import {
   pickBestVariant,
   sortModelsForSystem,
 } from '../../../shared/models'
+import { groupModelsByType } from '../../../shared/modelClassifier'
 import type {
   AppSettings,
   OllamaModel,
@@ -181,8 +182,7 @@ export function ModelSettings({ settings, onUpdate }: ModelSettingsProps) {
     setTimeout(() => setEmbeddingSaved(false), 1500)
   }
 
-  const chatModels = models.filter(m => !m.name.includes('embed') && !m.name.includes('minilm'))
-  const embeddingModels = models.filter(m => m.name.includes('embed') || m.name.includes('minilm'))
+  const { chat: chatModels, embedding: embeddingModels } = groupModelsByType(models)
 
   const isModelInstalled = (model: RecommendedModel) =>
     model.variants.some(v =>
@@ -229,9 +229,8 @@ export function ModelSettings({ settings, onUpdate }: ModelSettingsProps) {
       <div className="rounded-lg border border-border p-4 space-y-4">
         <div className="flex items-center gap-2">
           <span
-            className={`size-2 rounded-full ${
-              status.connected ? 'bg-emerald-500' : 'bg-red-500'
-            }`}
+            className={`size-2 rounded-full ${status.connected ? 'bg-emerald-500' : 'bg-red-500'
+              }`}
           />
           <span className="text-xs text-muted-foreground">
             {status.connected ? 'Connected' : 'Not connected'}

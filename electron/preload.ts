@@ -15,6 +15,7 @@ import type {
   ObsidianSyncStatus,
   ObsidianTemplate,
   ObsidianNoteCreationResult,
+  MemoryStats,
 } from '../shared/types'
 
 const loreAPI = {
@@ -176,6 +177,15 @@ const loreAPI = {
 
   getDbStats: (): Promise<DatabaseStats> =>
     ipcRenderer.invoke('db:stats'),
+
+  getMemoryStats: (): Promise<MemoryStats> =>
+    ipcRenderer.invoke('memory:stats'),
+
+  getMemoryDbPath: (): Promise<string> =>
+    ipcRenderer.invoke('memory:get-db-path'),
+
+  pickMemoryFolder: (): Promise<string | null> =>
+    ipcRenderer.invoke('memory:pick-folder'),
 
   searchDocuments: (
     query: string,

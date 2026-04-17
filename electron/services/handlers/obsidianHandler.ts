@@ -1,7 +1,7 @@
 import { logger } from '../../logger'
 import { getSettings } from '../settingsService'
 import { createObsidianNote } from '../obsidianNoteWriter'
-import { storeThought } from '../documentPipeline'
+import { storeThought } from '../storage/documentPipeline'
 import { formatLocalDate } from '../localDate'
 import type {
   ClassificationResult,

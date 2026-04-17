@@ -14,6 +14,7 @@ import type {
   ObsidianSyncStatus,
   ObsidianTemplate,
   ObsidianNoteCreationResult,
+  MemoryStats,
 } from '../../shared/types'
 
 declare global {
@@ -66,6 +67,9 @@ declare global {
       openExternal: (url: string) => void
 
       getDbStats: () => Promise<DatabaseStats>
+      getMemoryStats: () => Promise<MemoryStats>
+      getMemoryDbPath: () => Promise<string>
+      pickMemoryFolder: () => Promise<string | null>
       searchDocuments: (query: string, options?: RetrievalOptions) => Promise<unknown[]>
       getDocumentsByType: (type: string) => Promise<unknown[]>
 

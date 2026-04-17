@@ -1,5 +1,5 @@
-import { storeThought } from '../documentPipeline'
-import { retrieveRelevantDocuments } from '../documentPipeline'
+import { storeThought } from '../storage/documentPipeline'
+import { retrieveRelevantDocuments } from '../storage/documentPipeline'
 import { formatLocalDate } from '../localDate'
 import type { ClassificationResult, AgentEvent } from '../../../shared/types'
 

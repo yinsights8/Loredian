@@ -1,6 +1,6 @@
-import { retrieveRelevantDocuments } from '../documentPipeline'
-import { hardDeleteDocument, updateDocument } from '../lanceService'
-import { embedText } from '../embeddingService'
+import { retrieveRelevantDocuments } from '../storage/documentPipeline'
+import { hardDeleteDocument, updateDocument } from '../storage/lanceService'
+import { embedText } from '../storage/embeddingService'
 import { resolveCommandTargets } from '../commandDecompositionService'
 import { looksLikeInstructionManagementRequest } from '../userIntentHeuristics'
 import type {

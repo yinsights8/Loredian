@@ -18,6 +18,12 @@ const DEFAULTS: AppSettings = {
   obsidianVaults: [],
   obsidianAutoSync: true,
   obsidianSyncIntervalMinutes: 15,
+  // ── Memory settings ────────────────────────────────────────
+  memorySettings: {
+    enabled: true,
+    provider: 'lancedb',
+    dbPath: '',
+  },
 }
 
 function getSettingsPath(): string {

@@ -10,7 +10,7 @@ import { registerIpcHandlers } from './ipc/handlers'
 import { getSettings, updateSettings } from './services/settingsService'
 import { startHealthCheck, stopHealthCheck, preloadModels } from './services/ollamaService'
 import { bootstrapOllama, stopOllama, isOllamaSetupNeeded } from './services/ollamaBootstrap'
-import { initialize as initLanceDB, cleanupOldDeleted, compactTable } from './services/lanceService'
+import { initialize as initLanceDB, cleanupOldDeleted, compactTable } from './services/storage/lanceService'
 import { applyAutoStart } from './services/autoStartService'
 import { syncAllVaults, startWatcher, stopAllWatchers } from './services/obsidianService'
 import {
