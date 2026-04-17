@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Settings, Cpu, Info, Minus, X, BookOpen } from 'lucide-react'
+import { Settings, Cpu, Info, Minus, X, BookOpen, Database } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useSettings } from '@/hooks/useSettings'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -7,12 +7,14 @@ import { GeneralSettings } from './GeneralSettings'
 import { ModelSettings } from './ModelSettings'
 import { AboutSettings } from './AboutSettings'
 import { ObsidianSettings } from './ObsidianSettings'
+import { MemorySettings } from './MemorySettings'
 
-type Tab = 'general' | 'model' | 'obsidian' | 'about'
+type Tab = 'general' | 'model' | 'memory' | 'obsidian' | 'about'
 
 const tabs: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: 'general', label: 'General', icon: Settings },
   { id: 'model', label: 'Model', icon: Cpu },
+  { id: 'memory', label: 'Memory', icon: Database },
   { id: 'obsidian', label: 'Obsidian', icon: BookOpen },
   { id: 'about', label: 'About', icon: Info },
 ]
@@ -94,6 +96,9 @@ export function SettingsWindow() {
             )}
             {activeTab === 'model' && (
               <ModelSettings settings={settings} onUpdate={update} />
+            )}
+            {activeTab === 'memory' && (
+              <MemorySettings settings={settings} onUpdate={update} />
             )}
             {activeTab === 'obsidian' && (
               <ObsidianSettings settings={settings} onUpdate={update} />
