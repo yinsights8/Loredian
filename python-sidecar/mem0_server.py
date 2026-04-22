@@ -9,7 +9,7 @@ import os
 import pathlib
 import sys
 from typing import Optional, Any
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import uvicorn
@@ -29,7 +29,7 @@ app = FastAPI(title='Mem0 Sidecar', version='1.1.0')
 # Global mem0 instance and data directory
 mem0_instance: Optional[Memory] = None
 data_dir: Optional[pathlib.Path] = None
-DEFAULT_USER_ID = os.environ.get('MEM0_USER_ID', 'lore-user')
+DEFAULT_USER_ID = os.environ.get('MEM0_USER_ID', '')
 
 
 # Request/Response Models
@@ -47,14 +47,14 @@ class InitRequest(BaseModel):
 
 class AddRequest(BaseModel):
     messages: list[Message]
+    user_id: str
     metadata: Optional[dict[str, Any]] = None
-    user_id: Optional[str] = None
 
 
 class SearchRequest(BaseModel):
     query: str
+    user_id: str
     limit: int = 20
-    user_id: Optional[str] = None
 
 
 class MemoryResponse(BaseModel):
@@ -135,7 +135,7 @@ async def add_memories(req: AddRequest):
         raise HTTPException(status_code=503, detail='Mem0 not initialized')
 
     try:
-        user_id = req.user_id or DEFAULT_USER_ID
+        user_id = req.user_id
         messages = [{'role': m.role, 'content': m.content} for m in req.messages]
 
         # FIX #1: Pass callable reference to asyncio.to_thread, not an evaluated call
@@ -178,7 +178,7 @@ async def search_memories(req: SearchRequest):
         raise HTTPException(status_code=503, detail='Mem0 not initialized')
 
     try:
-        user_id = req.user_id or DEFAULT_USER_ID
+        user_id = req.user_id
 
         # FIX #2: v1.1 uses user_id as direct parameter, not inside filters
         raw = await asyncio.to_thread(
@@ -214,13 +214,13 @@ async def search_memories(req: SearchRequest):
 
 
 @app.get('/memories')
-async def get_all_memories(user_id: Optional[str] = None):
+async def get_all_memories(user_id: str = Query(default=None)):
     """Get all memories for the user"""
     if mem0_instance is None:
         raise HTTPException(status_code=503, detail='Mem0 not initialized')
 
     try:
-        target_user = user_id or DEFAULT_USER_ID
+        target_user = user_id
 
         # FIX #3: v1.1 uses user_id as direct parameter
         raw = await asyncio.to_thread(
@@ -269,13 +269,13 @@ async def delete_memory(memory_id: str):
 
 
 @app.delete('/memories')
-async def delete_all_memories(user_id: Optional[str] = None):
+async def delete_all_memories(user_id: str = Query(default=None)):
     """Delete all memories for the user"""
     if mem0_instance is None:
         raise HTTPException(status_code=503, detail='Mem0 not initialized')
 
     try:
-        target_user = user_id or DEFAULT_USER_ID
+        target_user = user_id
 
         # FIX #4: v1.1 uses user_id as direct parameter
         await asyncio.to_thread(

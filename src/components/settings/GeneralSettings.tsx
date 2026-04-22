@@ -11,6 +11,12 @@ interface GeneralSettingsProps {
 
 export function GeneralSettings({ settings, onUpdate }: GeneralSettingsProps) {
   const [displays, setDisplays] = useState<DisplayInfo[]>([])
+  const [username, setUsername] = useState(settings.username)
+  const [usernameError, setUsernameError] = useState(false)
+
+  useEffect(() => {
+    setUsername(settings.username)
+  }, [settings.username])
 
   useEffect(() => {
     let isMounted = true
@@ -31,6 +37,28 @@ export function GeneralSettings({ settings, onUpdate }: GeneralSettingsProps) {
     if (folder) onUpdate({ ollamaModelsPath: folder })
   }
 
+  const handleUsernameBlur = () => {
+    const trimmed = username.trim()
+    if (!trimmed) {
+      setUsernameError(true)
+      return
+    }
+    setUsernameError(false)
+    onUpdate({ username: trimmed })
+  }
+
+  const handleUsernameKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      const target = e.target as HTMLInputElement
+      target.blur()
+    }
+  }
+
+  const handleUsernameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setUsername(e.target.value.slice(0, 32))
+    setUsernameError(false)
+  }
+
   return (
     <div className="space-y-8">
       <div>
@@ -41,6 +69,27 @@ export function GeneralSettings({ settings, onUpdate }: GeneralSettingsProps) {
       </div>
 
       <div className="space-y-6">
+        <div className="space-y-2">
+          <label className="text-sm font-medium text-foreground">Your Name</label>
+          <Input
+            value={username}
+            onChange={handleUsernameChange}
+            onBlur={handleUsernameBlur}
+            onKeyDown={handleUsernameKeyDown}
+            placeholder="e.g. Alex"
+            className={`max-w-xs ${usernameError ? 'border-destructive' : ''}`}
+          />
+          {usernameError ? (
+            <p className="text-xs text-destructive">
+              Username required for Mem0 memory. Please enter your name.
+            </p>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              Used to identify your memories
+            </p>
+          )}
+        </div>
+
         <div className="space-y-2">
           <label className="text-sm font-medium text-foreground">
             Keyboard Shortcut

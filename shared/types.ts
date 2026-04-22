@@ -111,6 +111,7 @@ export interface Mem0SearchResult extends Mem0Memory {
 }
 
 export interface AppSettings {
+  username: string
   shortcut: string
   startOnLogin: boolean
   hideOnBlur: boolean
