@@ -97,14 +97,12 @@ if (!gotLock) {
 
     const settings = getSettings()
 
-    // Initialize Mem0 sidecar if it's the active backend
+    // Spawn Mem0 sidecar if it's the active backend (init happens in bootstrapOllama.then())
     if (settings.memorySettings.provider === 'mem0') {
       try {
-        const { initializeMem0 } = await import('./services/storage/mem0/mem0Service')
-
         const sidecarScript = app.isPackaged
           ? join(process.resourcesPath, 'sidecar', 'mem0_server.py')
-          : join(__dirname, '../../python-sidecar/mem0_server.py')
+          : join(__dirname, '../python-sidecar/mem0_server.py')
 
         logger.info('[Mem0] Starting sidecar from: ' + sidecarScript)
 
@@ -127,13 +125,8 @@ if (!gotLock) {
         mem0Sidecar.stderr?.on('data', (data) => {
           logger.warn('[Mem0Sidecar] ' + data.toString().trim())
         })
-
-        await initializeMem0()
-        logger.info('[Lore] Mem0 initialized')
       } catch (err) {
-        logger.error({ err }, '[Lore] Failed to initialize Mem0')
-        mem0Sidecar?.kill()
-        mem0Sidecar = null
+        logger.error({ err }, '[Lore] Failed to spawn Mem0 sidecar')
       }
     }
 
@@ -159,7 +152,20 @@ if (!gotLock) {
       createChatWindow()
 
       bootstrapOllama()
-        .then(() => preloadModels())
+        .then(async () => {
+          if (settings.memorySettings.provider === 'mem0' && mem0Sidecar) {
+            try {
+              const { initializeMem0 } = await import('./services/storage/mem0/mem0Service')
+              await initializeMem0()
+              logger.info('[Lore] Mem0 initialized')
+            } catch (err) {
+              logger.error({ err }, '[Lore] Failed to initialize Mem0')
+              mem0Sidecar?.kill()
+              mem0Sidecar = null
+            }
+          }
+          return preloadModels()
+        })
         .catch((err) => {
           logger.error({ err }, '[Lore] Ollama bootstrap error')
         })
