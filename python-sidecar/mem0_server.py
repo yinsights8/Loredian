@@ -24,11 +24,12 @@ logging.basicConfig(
 logger = logging.getLogger('mem0_server')
 
 # FastAPI app
-app = FastAPI(title='Mem0 Sidecar', version='1.0.0')
+app = FastAPI(title='Mem0 Sidecar', version='1.1.0')
 
 # Global mem0 instance and data directory
 mem0_instance: Optional[Memory] = None
 data_dir: Optional[pathlib.Path] = None
+DEFAULT_USER_ID = os.environ.get('MEM0_USER_ID', 'lore-user')
 
 
 # Request/Response Models
@@ -47,11 +48,13 @@ class InitRequest(BaseModel):
 class AddRequest(BaseModel):
     messages: list[Message]
     metadata: Optional[dict[str, Any]] = None
+    user_id: Optional[str] = None
 
 
 class SearchRequest(BaseModel):
     query: str
     limit: int = 20
+    user_id: Optional[str] = None
 
 
 class MemoryResponse(BaseModel):
@@ -132,23 +135,35 @@ async def add_memories(req: AddRequest):
         raise HTTPException(status_code=503, detail='Mem0 not initialized')
 
     try:
-        # Convert Pydantic models to dicts
+        user_id = req.user_id or DEFAULT_USER_ID
         messages = [{'role': m.role, 'content': m.content} for m in req.messages]
 
-        # Add to mem0 in thread pool
-        result = await asyncio.to_thread(mem0_instance.add, messages, {'user_id': 'lore-user'})
+        # FIX #1: Pass callable reference to asyncio.to_thread, not an evaluated call
+        result = await asyncio.to_thread(
+            mem0_instance.add,
+            messages,
+            user_id=user_id,
+            metadata=req.metadata
+        )
 
-        # Normalize result to memoryIds array
+        # v1.1 returns {"results": [...], "relations": [...]}
+        items = result.get('results', []) if isinstance(result, dict) else result
+
         memory_ids = []
-        if isinstance(result, list):
-            memory_ids = [r if isinstance(r, str) else r.get('id', '') for r in result]
+        if isinstance(items, list):
+            for r in items:
+                if isinstance(r, dict) and 'id' in r:
+                    event = r.get('event', 'ADD')
+                    if event in ('ADD', 'UPDATE'):
+                        memory_ids.append(r['id'])
+                elif isinstance(r, str):
+                    memory_ids.append(r)
         elif isinstance(result, str):
             memory_ids = [result]
         elif isinstance(result, dict) and 'id' in result:
             memory_ids = [result['id']]
 
-        logger.info(f'Added {len(memory_ids)} memories')
-
+        logger.info(f'Added {len(memory_ids)} memories for user {user_id}')
         return {'memoryIds': memory_ids}
 
     except Exception as e:
@@ -163,27 +178,34 @@ async def search_memories(req: SearchRequest):
         raise HTTPException(status_code=503, detail='Mem0 not initialized')
 
     try:
-        results = await asyncio.to_thread(mem0_instance.search, req.query, {'user_id': 'lore-user', 'limit': req.limit})
+        user_id = req.user_id or DEFAULT_USER_ID
 
-        if not isinstance(results, list):
-            results = []
+        # FIX #2: v1.1 uses user_id as direct parameter, not inside filters
+        raw = await asyncio.to_thread(
+            mem0_instance.search,
+            req.query,
+            user_id=user_id,
+            limit=req.limit
+        )
 
-        # Normalize to SearchResult format
+        items = raw.get('results', []) if isinstance(raw, dict) else raw
+        if not isinstance(items, list):
+            items = []
+
         normalized = []
-        for r in results:
+        for r in items:
             if isinstance(r, dict):
                 normalized.append({
                     'id': r.get('id', ''),
                     'memory': r.get('memory', ''),
-                    'userId': r.get('userId') or r.get('user_id', 'lore-user'),
+                    'userId': r.get('userId') or r.get('user_id', user_id),
                     'createdAt': r.get('createdAt') or r.get('created_at', ''),
                     'updatedAt': r.get('updatedAt') or r.get('updated_at', ''),
                     'metadata': r.get('metadata'),
                     'score': r.get('score', 0.0),
                 })
 
-        logger.info(f'Search found {len(normalized)} results')
-
+        logger.info(f'Search found {len(normalized)} results for user {user_id}')
         return normalized
 
     except Exception as e:
@@ -192,32 +214,37 @@ async def search_memories(req: SearchRequest):
 
 
 @app.get('/memories')
-async def get_all_memories():
+async def get_all_memories(user_id: Optional[str] = None):
     """Get all memories for the user"""
     if mem0_instance is None:
         raise HTTPException(status_code=503, detail='Mem0 not initialized')
 
     try:
-        results = await asyncio.to_thread(mem0_instance.get_all, {'user_id': 'lore-user'})
+        target_user = user_id or DEFAULT_USER_ID
 
-        if not isinstance(results, list):
-            results = []
+        # FIX #3: v1.1 uses user_id as direct parameter
+        raw = await asyncio.to_thread(
+            mem0_instance.get_all,
+            user_id=target_user
+        )
 
-        # Normalize to MemoryResponse format
+        items = raw.get('results', []) if isinstance(raw, dict) else raw
+        if not isinstance(items, list):
+            items = []
+
         normalized = []
-        for r in results:
+        for r in items:
             if isinstance(r, dict):
                 normalized.append({
                     'id': r.get('id', ''),
                     'memory': r.get('memory', ''),
-                    'userId': r.get('userId') or r.get('user_id', 'lore-user'),
+                    'userId': r.get('userId') or r.get('user_id', target_user),
                     'createdAt': r.get('createdAt') or r.get('created_at', ''),
                     'updatedAt': r.get('updatedAt') or r.get('updated_at', ''),
                     'metadata': r.get('metadata'),
                 })
 
-        logger.info(f'Retrieved {len(normalized)} total memories')
-
+        logger.info(f'Retrieved {len(normalized)} total memories for user {target_user}')
         return normalized
 
     except Exception as e:
@@ -242,14 +269,20 @@ async def delete_memory(memory_id: str):
 
 
 @app.delete('/memories')
-async def delete_all_memories():
+async def delete_all_memories(user_id: Optional[str] = None):
     """Delete all memories for the user"""
     if mem0_instance is None:
         raise HTTPException(status_code=503, detail='Mem0 not initialized')
 
     try:
-        await asyncio.to_thread(mem0_instance.delete_all, {'user_id': 'lore-user'})
-        logger.info('Deleted all memories')
+        target_user = user_id or DEFAULT_USER_ID
+
+        # FIX #4: v1.1 uses user_id as direct parameter
+        await asyncio.to_thread(
+            mem0_instance.delete_all,
+            user_id=target_user
+        )
+        logger.info(f'Deleted all memories for user {target_user}')
         return {'status': 'deleted_all'}
 
     except Exception as e:
