@@ -156,49 +156,59 @@ export function MemorySettings({ settings, onUpdate }: MemorySettingsProps) {
 
       {/* Provider */}
       <div className="space-y-2">
-        <label className="text-sm font-medium text-foreground">Provider</label>
+        <label className="text-sm font-medium text-foreground">Memory Provider</label>
         <select
           value={settings.memorySettings.provider}
-          disabled
-          className="max-w-xs rounded-md border border-border bg-muted px-3 py-2 text-sm text-muted-foreground"
+          onChange={(e) => {
+            const provider = e.target.value as 'lancedb' | 'mem0'
+            onUpdate({ memorySettings: { ...settings.memorySettings, provider } })
+          }}
+          className="max-w-xs rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
         >
-          <option value="lancedb">LanceDB</option>
+          <option value="lancedb">LanceDB — Traditional vector search</option>
+          <option value="mem0">Mem0 — Smart memory layer (beta)</option>
         </select>
         <p className="text-xs text-muted-foreground">
-          More providers coming soon.
+          {settings.memorySettings.provider === 'mem0'
+            ? 'AI-powered memory extraction and consolidation.'
+            : 'Direct vector similarity search.'}
         </p>
       </div>
 
-      {/* [MemorySettings] Database Path configuration */}
-      <div className="space-y-2">
-        <label className="text-sm font-medium text-foreground">Database Path</label>
-        <div className="flex gap-2">
-          <div className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm text-muted-foreground truncate font-mono">
-            {localDbPath || dbPath || 'Default (userData/lore-db)'}
-          </div>
-          <Button variant="outline" size="sm" onClick={handleBrowse}>
-            <FolderOpen className="size-4" />
-            Browse
-          </Button>
-          {localDbPath && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleResetPath}
-              className="text-muted-foreground hover:text-destructive"
-            >
-              <X className="size-4" />
+      {/* [MemorySettings] Database Path configuration - LanceDB only */}
+      {settings.memorySettings.provider === 'lancedb' && (
+        <div className="space-y-2">
+          <label className="text-sm font-medium text-foreground">Database Path</label>
+          <div className="flex gap-2">
+            <div className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm text-muted-foreground truncate font-mono">
+              {localDbPath || dbPath || 'Default (userData/lore-db)'}
+            </div>
+            <Button variant="outline" size="sm" onClick={handleBrowse}>
+              <FolderOpen className="size-4" />
+              Browse
             </Button>
-          )}
+            {localDbPath && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleResetPath}
+                className="text-muted-foreground hover:text-destructive"
+              >
+                <X className="size-4" />
+              </Button>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Where your memory data is stored. Leave empty to use the default location.
+          </p>
         </div>
-        <p className="text-xs text-muted-foreground">
-          Where your memory data is stored. Leave empty to use the default location.
-        </p>
-      </div>
+      )}
 
       {/* [MemorySettings] Status section - shows connection and stats */}
       <div className="rounded-lg border border-border p-4 space-y-3">
-        <p className="text-sm font-medium text-foreground">Status</p>
+        <p className="text-sm font-medium text-foreground">
+          {settings.memorySettings.provider === 'mem0' ? 'Mem0 Status' : 'Status'}
+        </p>
 
         {loading ? (
           <p className="text-xs text-muted-foreground">Loading...</p>
@@ -210,8 +220,10 @@ export function MemorySettings({ settings, onUpdate }: MemorySettingsProps) {
               />
               <span>Connection: {stats?.connected ? 'Connected' : 'Not connected'}</span>
             </div>
-            <p>Total Documents: {stats?.totalDocuments ?? 0}</p>
-            <p>Last Updated: {formatRelativeTime(stats?.lastUpdated ?? null)}</p>
+            <p>{settings.memorySettings.provider === 'mem0' ? 'Total Memories' : 'Total Documents'}: {stats?.totalDocuments ?? 0}</p>
+            {settings.memorySettings.provider === 'lancedb' && (
+              <p>Last Updated: {formatRelativeTime(stats?.lastUpdated ?? null)}</p>
+            )}
           </div>
         )}
 
@@ -221,17 +233,40 @@ export function MemorySettings({ settings, onUpdate }: MemorySettingsProps) {
         </Button>
       </div>
 
-      {/* [MemorySettings] Action buttons for DB maintenance */}
-      <div className="flex gap-2">
-        <Button variant="outline" size="sm" onClick={handleCompact}>
-          <Database className="size-4 mr-1" />
-          Compact Database
-        </Button>
-        <Button variant="outline" size="sm" onClick={handleReset}>
-          <RotateCcw className="size-4 mr-1" />
-          Reset Database
-        </Button>
-      </div>
+      {/* [MemorySettings] Action buttons - provider specific */}
+      {settings.memorySettings.provider === 'mem0' ? (
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={() => window.loreAPI.getMemoryStats()}>
+            <Database className="size-4 mr-1" />
+            View All Memories
+          </Button>
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={async () => {
+              const confirmed = confirm('Are you sure you want to delete all memories? This cannot be undone.')
+              if (confirmed) {
+                await window.loreAPI.deleteAllMemories()
+                await refreshStats()
+              }
+            }}
+          >
+            <RotateCcw className="size-4 mr-1" />
+            Clear All Memories
+          </Button>
+        </div>
+      ) : (
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={handleCompact}>
+            <Database className="size-4 mr-1" />
+            Compact Database
+          </Button>
+          <Button variant="outline" size="sm" onClick={handleReset}>
+            <RotateCcw className="size-4 mr-1" />
+            Reset Database
+          </Button>
+        </div>
+      )}
 
       {/* Disable Warning Dialog */}
       <Dialog open={showDisableWarning} onOpenChange={setShowDisableWarning}>

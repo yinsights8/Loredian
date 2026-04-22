@@ -70,6 +70,7 @@ declare global {
       getMemoryStats: () => Promise<MemoryStats>
       getMemoryDbPath: () => Promise<string>
       pickMemoryFolder: () => Promise<string | null>
+      deleteAllMemories: () => Promise<{ success: boolean; error?: string }>
       searchDocuments: (query: string, options?: RetrievalOptions) => Promise<unknown[]>
       getDocumentsByType: (type: string) => Promise<unknown[]>
 

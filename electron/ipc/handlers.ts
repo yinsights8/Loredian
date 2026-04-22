@@ -24,6 +24,7 @@ import { getStats, resetTable } from '../services/storage/lanceService'
 import { retrieveRelevantDocuments } from '../services/storage/documentPipeline'
 import { getDocumentsByType } from '../services/storage/lanceService'
 import { getDbPath, getLastUpdated } from '../services/storage/lanceService'
+import { getMem0Stats, deleteAllMem0Memories, initializeMem0 } from '../services/storage/mem0/mem0Service'
 import { processUserInput, clearConversation } from '../services/agentService'
 import { getSystemInfo, getHardwareProfile } from '../services/systemInfoService'
 import { refreshObsidianAutoSyncScheduler } from '../services/obsidianAutoSyncScheduler'
@@ -294,6 +295,16 @@ export function registerIpcHandlers(): void {
       repositionChatWindow()
     }
 
+    // Initialize Mem0 if provider changed to 'mem0'
+    const prevProvider = prev.memorySettings?.provider
+    const newProvider = updated.memorySettings?.provider
+    if (newProvider === 'mem0' && prevProvider !== 'mem0') {
+      process.chdir(app.getPath('userData'))
+      await initializeMem0().catch(err => {
+        logger.error({ err }, '[Lore] Failed to initialize Mem0 after provider switch')
+      })
+    }
+
     for (const win of BrowserWindow.getAllWindows()) {
       win.webContents.send('settings:changed', updated)
     }
@@ -318,6 +329,17 @@ export function registerIpcHandlers(): void {
   // [MemorySettings] IPC handler - get memory storage statistics
   ipcMain.handle('memory:stats', async () => {
     try {
+      const settings = getSettings()
+      if (settings.memorySettings.provider === 'mem0') {
+        const stats = await getMem0Stats()
+        return {
+          connected: true,
+          totalDocuments: stats.totalMemories,
+          deletedDocuments: 0,
+          lastUpdated: null,
+        }
+      }
+      // LanceDB path
       const stats = await getStats()
       const lastUpdated = await getLastUpdated()
       return {
@@ -350,6 +372,20 @@ export function registerIpcHandlers(): void {
     })
     if (result.canceled) return null
     return result.filePaths[0]
+  })
+
+  // [MemorySettings] IPC handler - delete all Mem0 memories
+  ipcMain.handle('memory:delete-all', async () => {
+    try {
+      const settings = getSettings()
+      if (settings.memorySettings.provider === 'mem0') {
+        await deleteAllMem0Memories()
+      }
+      return { success: true }
+    } catch (err) {
+      logger.error({ err }, '[Lore] Failed to delete all memories')
+      return { success: false, error: err instanceof Error ? err.message : 'Unknown error' }
+    }
   })
 
   ipcMain.handle(

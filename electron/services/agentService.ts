@@ -1,5 +1,7 @@
 import { classifyInput } from './classifierService'
 import { logger } from '../logger'
+import { getSettings } from './settingsService'
+import { addToMem0 } from './storage/mem0/mem0Service'
 import { handleThought } from './handlers/thoughtHandler'
 import { handleQuestion } from './handlers/questionHandler'
 import { handleCommand } from './handlers/commandHandler'
@@ -215,6 +217,16 @@ export async function* processUserInput(userInput: string): AsyncGenerator<Agent
 
   if (assistantResponse) {
     session.history.push({ role: 'assistant', content: assistantResponse })
+
+    // Post-conversation hook: feed to Mem0 for background extraction
+    if (getSettings().memorySettings.provider === 'mem0') {
+      addToMem0([
+        { role: 'user', content: userInput },
+        { role: 'assistant', content: assistantResponse },
+      ]).catch(err => {
+        logger.warn({ err }, '[Agent] Mem0 background extraction failed')
+      })
+    }
   }
 
   if (classification.extractedTags.length > 0) {

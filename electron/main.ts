@@ -2,6 +2,7 @@ import { app, BrowserWindow } from 'electron'
 import { logger } from './logger'
 import { join } from 'path'
 import { appendFileSync } from 'fs'
+import { spawn, ChildProcess } from 'child_process'
 import { createChatWindow, showChatWindow, getChatWindow } from './windows/chatWindow'
 import { createSetupWindow } from './windows/setupWindow'
 import { createTray, destroyTray } from './tray/trayManager'
@@ -67,6 +68,8 @@ process.env.VITE_PUBLIC = process.env.VITE_DEV_SERVER_URL
   ? join(process.env.DIST_ELECTRON, '../public')
   : process.env.DIST
 
+let mem0Sidecar: ChildProcess | null = null
+
 const gotLock = app.requestSingleInstanceLock()
 
 if (!gotLock) {
@@ -93,6 +96,46 @@ if (!gotLock) {
     }
 
     const settings = getSettings()
+
+    // Initialize Mem0 sidecar if it's the active backend
+    if (settings.memorySettings.provider === 'mem0') {
+      try {
+        const { initializeMem0 } = await import('./services/storage/mem0/mem0Service')
+
+        const sidecarScript = app.isPackaged
+          ? join(process.resourcesPath, 'sidecar', 'mem0_server.py')
+          : join(__dirname, '../../python-sidecar/mem0_server.py')
+
+        logger.info('[Mem0] Starting sidecar from: ' + sidecarScript)
+
+        const mem0DataDir = join(app.getPath('userData'), 'mem0')
+
+        mem0Sidecar = spawn('python', [sidecarScript], {
+          stdio: ['ignore', 'pipe', 'pipe'],
+          detached: false,
+          env: { ...process.env, MEM0_DATA_DIR: mem0DataDir },
+        })
+
+        mem0Sidecar.on('error', (err) => {
+          logger.error({ err }, '[Mem0Sidecar] Spawn error')
+        })
+
+        mem0Sidecar.stdout?.on('data', (data) => {
+          logger.info('[Mem0Sidecar] ' + data.toString().trim())
+        })
+
+        mem0Sidecar.stderr?.on('data', (data) => {
+          logger.warn('[Mem0Sidecar] ' + data.toString().trim())
+        })
+
+        await initializeMem0()
+        logger.info('[Lore] Mem0 initialized')
+      } catch (err) {
+        logger.error({ err }, '[Lore] Failed to initialize Mem0')
+        mem0Sidecar?.kill()
+        mem0Sidecar = null
+      }
+    }
 
     createTray()
     registerShortcuts()
@@ -179,6 +222,10 @@ if (!gotLock) {
     stopHealthCheck()
     stopObsidianAutoSyncScheduler()
     stopAllWatchers()
+    if (mem0Sidecar) {
+      mem0Sidecar.kill()
+      mem0Sidecar = null
+    }
     stopOllama()
       .then(() => app.quit())
       .catch((err) => {

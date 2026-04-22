@@ -11,6 +11,7 @@ import { formatLocalDate, getLocalDateRangeForDay, getLocalDateRangeForWeek } fr
 import { getSettings } from '../settingsService'
 import { loadSkill } from '../skillLoader'
 import { pruneRetrievedDocumentsForAnswer } from './questionContextPruning'
+import { searchMem0 } from '../storage/mem0/mem0Service'
 import {
   extractObsidianNoteTitleCandidates,
   looksLikeStructuralRetrievalQuery,
@@ -24,6 +25,7 @@ import type {
   LoreDocument,
   RetrievalOptions,
   ScoredDocument,
+  Mem0SearchResult,
 } from '../../../shared/types'
 
 const EMPTY_RESULT_RESPONSE = "I don't have any data about that topic."
@@ -39,6 +41,50 @@ export async function* handleQuestion(
   yield { type: 'status', message: 'Searching your notes...' }
 
   const settings = getSettings()
+
+  // Mem0 smart memory layer path
+  if (settings.memorySettings.provider === 'mem0') {
+    try {
+      const mem0Results = await searchMem0(userInput, 20)
+
+      if (mem0Results.length === 0) {
+        yield { type: 'chunk', content: "I don't have any memories about that yet." }
+        yield { type: 'done' }
+        return
+      }
+
+      yield { type: 'retrieved', documentIds: mem0Results.map(r => r.id) }
+      yield { type: 'status', message: `Found ${mem0Results.length} memories. Generating answer...` }
+
+      const contextBlock = mem0Results
+        .map((r, i) => `=== Memory ${i + 1} ===\n${r.memory}`)
+        .join('\n\n')
+
+      const skill = await loadSkill('question')
+      const prompt = skill
+        .replace('{context}', contextBlock)
+        .replace('{question}', userInput)
+
+      const chatMessages = [
+        ...(conversationContext ?? []).map(m => ({ ...m, role: m.role as 'system' | 'user' | 'assistant' })),
+        { role: 'user' as const, content: prompt },
+      ]
+      for await (const chunk of chat({
+        model: settings.selectedModel,
+        messages: chatMessages,
+        stream: true,
+      })) {
+        yield { type: 'chunk', content: chunk }
+      }
+      yield { type: 'done' }
+      return
+    } catch (err) {
+      logger.error({ err }, '[question] Mem0 search failed')
+      yield { type: 'chunk', content: 'Failed to search memories.' }
+      yield { type: 'done' }
+      return
+    }
+  }
 
   const retrievalOpts = buildRetrievalOptions(userInput, classification, retrievalOverrides)
   const requestedTitleCandidates = extractObsidianNoteTitleCandidates(userInput)

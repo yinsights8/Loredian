@@ -187,6 +187,9 @@ const loreAPI = {
   pickMemoryFolder: (): Promise<string | null> =>
     ipcRenderer.invoke('memory:pick-folder'),
 
+  deleteAllMemories: (): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('memory:delete-all'),
+
   searchDocuments: (
     query: string,
     options?: RetrievalOptions,

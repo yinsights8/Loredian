@@ -1,7 +1,9 @@
 import { retrieveRelevantDocuments } from '../storage/documentPipeline'
 import { hardDeleteDocument, updateDocument } from '../storage/lanceService'
 import { embedText } from '../storage/embeddingService'
+import { getSettings } from '../settingsService'
 import { resolveCommandTargets } from '../commandDecompositionService'
+import { searchMem0, deleteMem0Memory } from '../storage/mem0/mem0Service'
 import { looksLikeInstructionManagementRequest } from '../userIntentHeuristics'
 import type {
   ClassificationResult,
@@ -10,6 +12,7 @@ import type {
   LoreDocument,
   CommandOperation,
   RetrievalOptions,
+  Mem0Memory,
 } from '../../../shared/types'
 
 interface ExecutionResult {
@@ -25,6 +28,41 @@ export async function* handleCommand(
 ): AsyncGenerator<AgentEvent> {
   yield { type: 'status', message: 'Finding relevant documents...' }
 
+  const settings = getSettings()
+
+  // Mem0 smart memory layer path
+  if (settings.memorySettings.provider === 'mem0') {
+    try {
+      const mem0Results = await searchMem0(userInput, 20)
+
+      if (mem0Results.length === 0) {
+        yield {
+          type: 'chunk',
+          content: "I couldn't find any memories matching your request.",
+        }
+        yield { type: 'done' }
+        return
+      }
+
+      yield { type: 'status', message: 'Analyzing your request...' }
+
+      // For now, just delete the first matching memory as a simple command
+      // A more sophisticated approach would use resolveCommandTargets with Mem0 memories
+      const targetMemory = mem0Results[0]
+      await deleteMem0Memory(targetMemory.id)
+
+      yield { type: 'deleted', documentId: targetMemory.id }
+      yield { type: 'chunk', content: `Deleted the memory: "${targetMemory.memory.slice(0, 100)}..."` }
+      yield { type: 'done' }
+      return
+    } catch (err) {
+      yield { type: 'chunk', content: 'Failed to process your command.' }
+      yield { type: 'done' }
+      return
+    }
+  }
+
+  // LanceDB traditional path
   const isTodoCompletion = classification.extractedTags.some(
     (tag) => tag.toLowerCase() === 'todo',
   )

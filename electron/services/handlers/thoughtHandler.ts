@@ -2,6 +2,8 @@ import { v4 as uuidv4 } from 'uuid'
 import { storeThought, storeThoughtWithMetadata, checkForDuplicate } from '../storage/documentPipeline'
 import { formatLocalDate } from '../localDate'
 import { decomposeForStorage } from '../saveDecompositionService'
+import { getSettings } from '../settingsService'
+import { addToMem0 } from '../storage/mem0/mem0Service'
 import type { ClassificationResult, AgentEvent, DecomposedItem, DocumentType, ConversationEntry } from '../../../shared/types'
 
 export async function* handleThought(
@@ -9,6 +11,27 @@ export async function* handleThought(
   classification: ClassificationResult,
   conversationHistory: readonly ConversationEntry[] = [],
 ): AsyncGenerator<AgentEvent> {
+  // Mem0 smart memory layer path
+  if (getSettings().memorySettings.provider === 'mem0') {
+    yield { type: 'status', message: 'Processing your thought...' }
+    const messages = [
+      ...(conversationHistory ?? []).map(h => ({ role: h.role, content: h.content })),
+      { role: 'user' as const, content: userInput },
+    ]
+    try {
+      const result = await addToMem0(messages)
+      for (const id of result.memoryIds) {
+        yield { type: 'stored', documentId: id }
+      }
+      yield { type: 'chunk', content: "Got it, I've saved your thought." }
+    } catch (err) {
+      yield { type: 'chunk', content: 'Failed to save your thought to Mem0.' }
+    }
+    yield { type: 'done' }
+    return
+  }
+
+  // LanceDB traditional path
   yield { type: 'status', message: 'Saving your thought...' }
 
   const { items } = await decomposeForStorage(userInput, conversationHistory)

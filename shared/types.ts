@@ -82,9 +82,9 @@ export interface ChatMessage {
 
 // [MemorySettings] User configurable settings for memory storage
 export interface MemorySettings {
-  enabled: boolean       // Whether memory storage is enabled
-  provider: 'lancedb'  // Memory database provider (future: chroma, pinecone, etc.)
-  dbPath: string       // Custom database path (empty = use default)
+  enabled: boolean              // Whether memory storage is enabled
+  provider: 'lancedb' | 'mem0'  // Memory database provider
+  dbPath: string                // Custom database path (empty = use default)
 }
 
 // [MemorySettings] Runtime statistics about memory storage
@@ -93,6 +93,21 @@ export interface MemoryStats {
   totalDocuments: number         // Total stored documents
   deletedDocuments: number       // Soft-deleted documents
   lastUpdated: string | null     // Last document update timestamp
+}
+
+// [Mem0] Extracted memory from Mem0 smart memory layer
+export interface Mem0Memory {
+  id: string
+  memory: string                         // extracted memory text
+  userId: string
+  createdAt: string
+  updatedAt: string
+  metadata?: Record<string, unknown>
+}
+
+// [Mem0] Search result with relevance score
+export interface Mem0SearchResult extends Mem0Memory {
+  score: number  // 0-1 relevance
 }
 
 export interface AppSettings {

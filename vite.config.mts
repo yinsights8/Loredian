@@ -27,7 +27,7 @@ export default defineConfig({
             outDir: 'dist-electron',
             sourcemap: true,
             rollupOptions: {
-              external: ['electron', '@lancedb/lancedb', 'apache-arrow'],
+              external: ['electron', '@lancedb/lancedb', 'apache-arrow', 'better-sqlite3', 'child_process'],
             },
           },
         },
