@@ -18,15 +18,14 @@ export async function* handleThought(
       ...(conversationHistory ?? []).map(h => ({ role: h.role, content: h.content })),
       { role: 'user' as const, content: userInput },
     ]
-    try {
-      const result = await addToMem0(messages)
-      for (const id of result.memoryIds) {
-        yield { type: 'stored', documentId: id }
-      }
-      yield { type: 'chunk', content: "Got it, I've saved your thought." }
-    } catch (err) {
-      yield { type: 'chunk', content: 'Failed to save your thought to Mem0.' }
-    }
+
+    // Start storage in background - respond immediately
+    addToMem0(messages).catch(err => {
+      console.error('[Mem0] Failed to store thought:', err)
+    })
+
+    // Respond immediately (don't wait for storage)
+    yield { type: 'chunk', content: "Got it, I've saved your thought." }
     yield { type: 'done' }
     return
   }

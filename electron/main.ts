@@ -118,6 +118,13 @@ if (!gotLock) {
           logger.error({ err }, '[Mem0Sidecar] Spawn error')
         })
 
+        mem0Sidecar.on('exit', (code, signal) => {
+          logger.warn(
+            { code, signal },
+            '[Mem0Sidecar] Process exited',
+          )
+        })
+
         mem0Sidecar.stdout?.on('data', (data) => {
           logger.info('[Mem0Sidecar] ' + data.toString().trim())
         })

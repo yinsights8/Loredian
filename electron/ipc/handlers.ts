@@ -24,7 +24,7 @@ import { getStats, resetTable } from '../services/storage/lanceService'
 import { retrieveRelevantDocuments } from '../services/storage/documentPipeline'
 import { getDocumentsByType } from '../services/storage/lanceService'
 import { getDbPath, getLastUpdated } from '../services/storage/lanceService'
-import { getMem0Stats, deleteAllMem0Memories, initializeMem0 } from '../services/storage/mem0/mem0Service'
+import { getMem0Stats, deleteAllMem0Memories, initializeMem0, reinitializeMem0 } from '../services/storage/mem0/mem0Service'
 import { processUserInput, clearConversation } from '../services/agentService'
 import { getSystemInfo, getHardwareProfile } from '../services/systemInfoService'
 import { refreshObsidianAutoSyncScheduler } from '../services/obsidianAutoSyncScheduler'
@@ -287,6 +287,19 @@ export function registerIpcHandlers(): void {
         prev.embeddingModel !== '') {
       resetTable().catch(err => {
         logger.error({ err }, '[Lore] Failed to reset database after embedding model change')
+      })
+    }
+
+    // Reinitialize Mem0 when username changes
+    if ('username' in (partial as Record<string, unknown>) &&
+        updated.username !== prev.username &&
+        prev.username !== '') {
+      logger.info(
+        { old: prev.username, new: updated.username },
+        '[Lore] Username changed, reinitializing Mem0',
+      )
+      reinitializeMem0().catch(err => {
+        logger.error({ err }, '[Lore] Failed to reinitialize Mem0 after username change')
       })
     }
 

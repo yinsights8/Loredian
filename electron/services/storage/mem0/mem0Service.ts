@@ -5,10 +5,57 @@ import type { Mem0Memory, Mem0SearchResult } from '../../../../shared/types'
 
 const MEM0_SIDECAR_URL = 'http://localhost:7264'
 
+let cachedUserId: string | null = null
+
+function getUserId(): string {
+  const username = getSettings().username
+
+  if (!username) {
+    logger.warn({ username }, '[Mem0] No username set in settings')
+    throw new Error('Username required. Set your name in Settings > General')
+  }
+
+  const currentUserId = username
+
+  if (cachedUserId !== null && cachedUserId !== currentUserId) {
+    logger.info(
+      { old: cachedUserId, new: currentUserId },
+      '[Mem0] User changed, will use new namespace',
+    )
+  }
+
+  logger.debug({ username: currentUserId }, '[Mem0] getUserId resolved')
+  cachedUserId = currentUserId
+  return currentUserId
+}
+
 let isInitialized = false
+
+async function waitForSidecar(maxAttempts = 10, delayMs = 500): Promise<boolean> {
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      const res = await fetch(`${MEM0_SIDECAR_URL}/health`, { signal: AbortSignal.timeout(2000) })
+      // 200 = ready, 503 = sidecar running but Mem0 not init
+      if (res.status === 200 || res.status === 503) {
+        return true
+      }
+    } catch {
+      // Sidecar not responding
+    }
+    await new Promise(resolve => setTimeout(resolve, delayMs))
+  }
+  return false
+}
 
 export async function initializeMem0(): Promise<void> {
   try {
+    logger.info('[Mem0] Waiting for sidecar to be ready...')
+    const sidecarReady = await waitForSidecar()
+    if (!sidecarReady) {
+      throw new Error('Mem0 sidecar not responding')
+    }
+    logger.info('[Mem0] Sidecar ready, initializing Mem0...')
+
     const settings = getSettings()
     const dims = getEmbeddingDimension()
 
@@ -19,37 +66,33 @@ export async function initializeMem0(): Promise<void> {
       embedding_dims: dims,
     }
 
-    // Send init config to sidecar
-    const initRes = await fetch(`${MEM0_SIDECAR_URL}/init`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(config),
-    })
+    logger.info({ config }, '[Mem0] Initializing with config')
+
+    // Try init - will fail if sidecar not ready, that's ok
+    let initRes: Response | null = null
+    try {
+      initRes = await fetch(`${MEM0_SIDECAR_URL}/init`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(config),
+      })
+    } catch {
+      // Sidecar not ready yet, wait and retry once
+      await new Promise(resolve => setTimeout(resolve, 2000))
+      initRes = await fetch(`${MEM0_SIDECAR_URL}/init`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(config),
+      })
+    }
 
     if (!initRes.ok) {
       const error = await initRes.text()
       throw new Error(`Sidecar init failed: ${error}`)
     }
 
-    // Poll health endpoint until ready
-    const healthTimeout = 30_000
-    const startTime = Date.now()
-
-    while (Date.now() - startTime < healthTimeout) {
-      try {
-        const healthRes = await fetch(`${MEM0_SIDECAR_URL}/health`)
-        if (healthRes.ok) {
-          isInitialized = true
-          logger.info('[Mem0] Initialized successfully')
-          return
-        }
-      } catch {
-        // Not ready yet, retry
-      }
-      await new Promise(resolve => setTimeout(resolve, 500))
-    }
-
-    throw new Error('Mem0 sidecar health check timeout')
+    isInitialized = true
+    logger.info('[Mem0] Initialized successfully')
   } catch (err) {
     logger.error({ err }, '[Mem0] Initialization failed')
     throw err
@@ -73,7 +116,11 @@ export async function addToMem0(
     const res = await fetch(`${MEM0_SIDECAR_URL}/add`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages, metadata }),
+      body: JSON.stringify({
+        messages,
+        user_id: getUserId(),
+        metadata,
+      }),
     })
 
     if (!res.ok) {
@@ -98,7 +145,11 @@ export async function searchMem0(query: string, limit = 20): Promise<Mem0SearchR
     const res = await fetch(`${MEM0_SIDECAR_URL}/search`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query, limit }),
+      body: JSON.stringify({
+        query,
+        user_id: getUserId(),
+        limit,
+      }),
     })
 
     if (!res.ok) {
@@ -141,7 +192,9 @@ export async function getAllMem0Memories(): Promise<Mem0Memory[]> {
   }
 
   try {
-    const res = await fetch(`${MEM0_SIDECAR_URL}/memories`)
+    const res = await fetch(
+      `${MEM0_SIDECAR_URL}/memories?user_id=${encodeURIComponent(getUserId())}`,
+    )
 
     if (!res.ok) {
       const error = await res.text()
@@ -203,9 +256,12 @@ export async function deleteAllMem0Memories(): Promise<void> {
   }
 
   try {
-    const res = await fetch(`${MEM0_SIDECAR_URL}/memories`, {
-      method: 'DELETE',
-    })
+    const res = await fetch(
+      `${MEM0_SIDECAR_URL}/memories?user_id=${encodeURIComponent(getUserId())}`,
+      {
+        method: 'DELETE',
+      },
+    )
 
     if (!res.ok) {
       const error = await res.text()

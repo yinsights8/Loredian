@@ -4,6 +4,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
 import type { AppSettings } from '../../shared/types'
 
 const DEFAULTS: AppSettings = {
+  username: '',
   shortcut: 'CommandOrControl+Shift+Space',
   startOnLogin: true,
   hideOnBlur: true,
